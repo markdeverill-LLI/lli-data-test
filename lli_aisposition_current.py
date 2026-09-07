@@ -425,8 +425,10 @@ def main() -> int:
             if args.outputfilename:
                 base = Path(args.outputfilename).stem
                 chars_json_filename = f"{base}_basicchars.json"
+                chars_csv_filename = f"{base}_basicchars.csv"
             else:
                 chars_json_filename = f"aisposition_current_{timestamp}_basicchars.json"
+                chars_csv_filename = f"aisposition_current_{timestamp}_basicchars.csv"
             
             chars_json_path = output_dir / chars_json_filename
             chars_output_data = {
@@ -439,6 +441,12 @@ def main() -> int:
             with open(chars_json_path, 'w', encoding='utf-8') as f:
                 json.dump(chars_output_data, f, indent=2)
             print(f"Basic characteristics JSON saved to {chars_json_path}")
+
+            # Save basic characteristics CSV if requested
+            if args.gencsv.lower() == "y":
+                chars_csv_path = output_dir / chars_csv_filename
+                print(f"Saving basic characteristics CSV to {chars_csv_path}...")
+                save_to_csv(list(characteristics_map.values()), chars_csv_path)
             
             # Merge the data
             final_positions = merge_records(positions, characteristics_map)
