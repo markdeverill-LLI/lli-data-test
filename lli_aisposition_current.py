@@ -220,24 +220,31 @@ def merge_records(ais_positions: List[Dict[str, Any]],
                   characteristics_map: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Merge AIS position data with vessel basic characteristics, avoiding duplicate columns.
+    Preserves field order: AIS fields first (in their JSON order), then characteristics fields.
     
     Args:
         ais_positions: List of AIS position records
         characteristics_map: Mapping of vesselId to characteristics data
         
     Returns:
-        List of merged records
+        List of merged records with preserved field order
     """
     merged = []
     ais_keys = set(ais_positions[0].keys()) if ais_positions else set()
     
     for ais_record in ais_positions:
-        merged_record = dict(ais_record)
+        # Start with AIS record (preserves its field order)
+        merged_record = {}
+        
+        # Add AIS fields in their original order
+        for key in ais_record.keys():
+            merged_record[key] = ais_record[key]
+        
         vessel_id = ais_record.get("VesselId")
         
+        # Add characteristics fields in their original order (excluding duplicates)
         if vessel_id and vessel_id in characteristics_map:
             chars = characteristics_map[vessel_id]
-            # Add only new keys from characteristics (not already in AIS data)
             for key, value in chars.items():
                 if key not in ais_keys:
                     merged_record[key] = value
@@ -248,14 +255,14 @@ def merge_records(ais_positions: List[Dict[str, Any]],
 
 def flatten_record(record: Dict[str, Any], parent_key: str = "") -> Dict[str, Any]:
     """
-    Flatten nested dictionary for CSV export.
+    Flatten nested dictionary for CSV export, preserving key order.
 
     Args:
         record: Dictionary to flatten
         parent_key: Parent key prefix for nested keys
 
     Returns:
-        Flattened dictionary
+        Flattened dictionary with keys in original order
     """
     items = []
 
@@ -270,7 +277,30 @@ def flatten_record(record: Dict[str, Any], parent_key: str = "") -> Dict[str, An
         else:
             items.append((new_key, value))
 
+    # Preserve order by returning as dict (Python 3.7+ preserves insertion order)
     return dict(items)
+
+
+def build_fieldnames_in_order(data: List[Dict[str, Any]]) -> List[str]:
+    """
+    Build list of fieldnames in the order they appear in the data.
+    
+    Args:
+        data: List of records
+        
+    Returns:
+        List of fieldnames in encounter order
+    """
+    fieldnames = []
+    seen = set()
+    
+    for record in data:
+        for key in record.keys():
+            if key not in seen:
+                fieldnames.append(key)
+                seen.add(key)
+    
+    return fieldnames
 
 
 def save_to_csv(data: List[Dict[str, Any]], csv_path: Path) -> None:
@@ -285,26 +315,18 @@ def save_to_csv(data: List[Dict[str, Any]], csv_path: Path) -> None:
         print(f"No data to save to CSV")
         return
     
-    # Flatten records
+    # Flatten records (this preserves the order from the original JSON)
     flattened = [flatten_record(record) for record in data]
     
-    # Preserve field order from the JSON by using the first record's order
-    # and collecting any additional fields from other records
-    fieldnames = []
-    seen = set()
-    
-    for record in flattened:
-        for key in record.keys():
-            if key not in seen:
-                fieldnames.append(key)
-                seen.add(key)
+    # Build fieldnames in the order they appear in the data
+    fieldnames = build_fieldnames_in_order(flattened)
     
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(flattened)
     
-    print(f"CSV saved to {csv_path}")
+    print(f"CSV saved to {csv_path} with {len(fieldnames)} fields")
 
 
 def main() -> int:
