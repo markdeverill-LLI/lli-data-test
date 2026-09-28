@@ -260,6 +260,12 @@ def main() -> int:
         default="y",
         help="Generate CSV file (default: y)"
     )
+    parser.add_argument(
+        "--outputfilename",
+        metavar="filename",
+        default=None,
+        help="Base filename to use for both JSON and CSV outputs (no extension). If omitted, a timestamped name is used."
+    )
     args = parser.parse_args()
     
     try:
@@ -281,9 +287,17 @@ def main() -> int:
         all_vessels = fetch_all_pages(token, params)
         print(f"Total vessels retrieved: {len(all_vessels)}")
         
-        # Generate output filename with timestamp
+        # Determine output filenames
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        json_filename = f"vessel_list_{timestamp}.json"
+        if args.outputfilename:
+            # Use provided base name (strip any path and use stem to remove extension)
+            base = Path(args.outputfilename).stem
+            json_filename = f"{base}.json"
+            csv_filename = f"{base}.csv"
+        else:
+            json_filename = f"vessel_list_{timestamp}.json"
+            csv_filename = f"vessel_list_{timestamp}.csv"
+
         json_path = output_dir / json_filename
         
         # Save to JSON
@@ -301,7 +315,6 @@ def main() -> int:
         
         # Save to CSV if requested
         if args.gencsv.lower() == "y":
-            csv_filename = f"vessel_list_{timestamp}.csv"
             csv_path = output_dir / csv_filename
             save_to_csv(all_vessels, csv_path)
         
