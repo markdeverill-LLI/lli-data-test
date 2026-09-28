@@ -26,8 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bucket", required=True, help="S3 bucket name")
     parser.add_argument(
         "--prefix",
-        required=True,
-        help="S3 target folder/prefix",
+        default="",
+        help="Optional S3 target folder/prefix (default: bucket root)",
     )
     parser.add_argument(
         "--ext",
@@ -45,19 +45,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     return parser
-
-
-def find_upload_file(folder: Path, extension: str) -> Path:
-    matches = find_upload_files(folder, extension, recursive=False)
-
-    if len(matches) != 1:
-        normalized_extension = normalize_extension(extension)
-        raise ValueError(
-            f"Expected exactly one {normalized_extension} file in {folder}, "
-            f"but found {len(matches)}"
-        )
-
-    return matches[0]
 
 
 def normalize_extension(extension: str) -> str:
@@ -96,11 +83,15 @@ def upload_file(
         )
 
     normalized_prefix = prefix.strip("/")
+    s3_base = f"s3://{bucket}"
+    if normalized_prefix:
+        s3_base = f"{s3_base}/{normalized_prefix}"
+
     if relative_path is None:
-        s3_target = f"s3://{bucket}/{normalized_prefix}/"
+        s3_target = f"{s3_base}/"
     else:
         s3_key = relative_path.as_posix()
-        s3_target = f"s3://{bucket}/{normalized_prefix}/{s3_key}"
+        s3_target = f"{s3_base}/{s3_key}"
 
     result = subprocess.run(
         ["aws", "s3", "cp", str(source_file), s3_target],
@@ -123,29 +114,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 1
 
     try:
-        if args.copysubfolders == "Y":
-            source_files = find_upload_files(args.path, args.ext, recursive=True)
-            if not source_files:
-                raise ValueError(
-                    f"No {normalize_extension(args.ext)} files found in "
-                    f"{args.path} or its subfolders"
-                )
+        recursive = args.copysubfolders == "Y"
+        source_files = find_upload_files(args.path, args.ext, recursive)
+        if not source_files:
+            search_location = (
+                f"{args.path} or its subfolders" if recursive else str(args.path)
+            )
+            raise ValueError(
+                f"No {normalize_extension(args.ext)} files found in "
+                f"{search_location}"
+            )
 
-            for source_file in source_files:
+        for source_file in source_files:
+            if recursive:
                 relative_path = source_file.relative_to(args.path)
-                s3_target = upload_file(
-                    source_file,
-                    args.bucket,
-                    args.prefix,
-                    relative_path,
-                )
-                print(f"SUCCESS: Uploaded {relative_path} to {s3_target}")
+            else:
+                relative_path = Path(source_file.name)
 
-            print(f"SUCCESS: Uploaded {len(source_files)} files")
-            return 0
-
-        source_file = find_upload_file(args.path, args.ext)
-        s3_target = upload_file(source_file, args.bucket, args.prefix)
+            s3_target = upload_file(
+                source_file,
+                args.bucket,
+                args.prefix,
+                relative_path,
+            )
+            print(f"SUCCESS: Uploaded {relative_path} to {s3_target}")
     except (FileNotFoundError, ValueError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
@@ -154,7 +146,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"ERROR: AWS upload failed: {details}", file=sys.stderr)
         return error.returncode or 1
 
-    print(f"SUCCESS: Uploaded {source_file.name} to {s3_target}")
+    print(f"SUCCESS: Uploaded {len(source_files)} files")
     return 0
 
 
