@@ -61,11 +61,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server", required=True, help="SFTP server hostname")
     parser.add_argument("--port", type=int, default=22, help="SFTP port (default: 22)")
     parser.add_argument("--user", required=True, help="SFTP username")
-    parser.add_argument("--password", required=True, help="SFTP password")
+    parser.add_argument("--password", help="SFTP password or private-key passphrase")
     parser.add_argument(
         "--sshkey",
         "--ssh-key",
         dest="sshkey",
+        help="Path to the client SSH private-key file",
+    )
+    parser.add_argument(
+        "--host-key-fingerprint",
         help="Expected server SSH host-key fingerprint",
     )
     parser.add_argument(
@@ -90,7 +94,10 @@ def parse_args() -> argparse.Namespace:
         type=str.upper,
         help="File transfer mode (default: BINARY)",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.password and not args.sshkey:
+        parser.error("at least one of --password or --sshkey is required")
+    return args
 
 
 def normalize_remote_path(remote_path: str) -> str:
@@ -108,6 +115,27 @@ def clean_path_argument(path: str) -> str:
     if len(cleaned) >= 2 and quote_pairs.get(cleaned[0]) == cleaned[-1]:
         cleaned = cleaned[1:-1].strip()
     return cleaned
+
+
+def validate_private_key_file(key_path: Path) -> None:
+    with key_path.open(encoding="utf-8", errors="ignore") as key_file:
+        first_line = key_file.readline().strip()
+
+    public_key_types = {
+        "ssh-rsa",
+        "ssh-ed25519",
+        "ecdsa-sha2-nistp256",
+        "ecdsa-sha2-nistp384",
+        "ecdsa-sha2-nistp521",
+    }
+    if (
+        any(part in public_key_types for part in first_line.split()[:3])
+        or first_line == "---- BEGIN SSH2 PUBLIC KEY ----"
+    ):
+        raise ValueError(
+            f"{key_path} contains a public key. --sshkey requires the matching "
+            "private key file."
+        )
 
 
 def find_local_files(local_path: str) -> List[Path]:
@@ -163,13 +191,14 @@ def upload_file(
 
 def configure_host_key_policy(
     client: paramiko.SSHClient,
-    sshkey: Optional[str],
+    host_key_fingerprint: Optional[str],
 ) -> None:
-    if sshkey:
-        client.set_missing_host_key_policy(FingerprintPolicy(sshkey))
+    if host_key_fingerprint:
+        client.set_missing_host_key_policy(FingerprintPolicy(host_key_fingerprint))
     else:
         print(
-            "Warning: no --sshkey supplied; server host-key verification is disabled.",
+            "Warning: no --host-key-fingerprint supplied; "
+            "server host-key verification is disabled.",
             file=sys.stderr,
         )
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -179,6 +208,13 @@ def run_upload(args: argparse.Namespace) -> None:
     local_path = clean_path_argument(args.local_path)
     remote_path = normalize_remote_path(clean_path_argument(args.remote_path))
     local_files = find_local_files(local_path)
+    ssh_key_path = None
+    if args.sshkey:
+        ssh_key = Path(clean_path_argument(args.sshkey)).expanduser()
+        if not ssh_key.is_file():
+            raise FileNotFoundError(f"SSH private key file not found: {ssh_key}")
+        validate_private_key_file(ssh_key)
+        ssh_key_path = str(ssh_key)
 
     print(f"localPath = {local_path}")
     print(f"remotePath = {remote_path}")
@@ -186,12 +222,13 @@ def run_upload(args: argparse.Namespace) -> None:
     print(f"transferMode = {args.transfer_mode}")
 
     client = paramiko.SSHClient()
-    configure_host_key_policy(client, args.sshkey)
+    configure_host_key_policy(client, args.host_key_fingerprint)
 
     try:
         client.connect(
             hostname=args.server,
             port=args.port,
+            key_filename=ssh_key_path,
             username=args.user,
             password=args.password,
             allow_agent=False,
