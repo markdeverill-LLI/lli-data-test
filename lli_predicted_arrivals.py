@@ -28,11 +28,22 @@ class PredictedArrivalsError(RuntimeError):
 
 def read_token(path: Path) -> str:
     try:
-        token = path.read_text(encoding="utf-8").strip()
+        with path.open(encoding="utf-8") as handle:
+            token_data = json.load(handle)
     except OSError as exc:
         raise PredictedArrivalsError(f"Could not read token file {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise PredictedArrivalsError(f"Token file is not valid JSON: {path}") from exc
+    if not isinstance(token_data, dict):
+        raise PredictedArrivalsError(f"Token file must contain a JSON object: {path}")
+    token = token_data.get("token")
+    if not isinstance(token, str):
+        raise PredictedArrivalsError(
+            f"Token file does not contain a string 'token' value: {path}"
+        )
+    token = token.strip()
     if not token:
-        raise PredictedArrivalsError(f"Token file is empty: {path}")
+        raise PredictedArrivalsError(f"Token value is empty in: {path}")
     return token
 
 
@@ -244,9 +255,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("country", help="three-letter country code, e.g. USA, MEX, CAN")
     parser.add_argument(
         "--token-file",
+        "--token_file",
         type=Path,
-        default=Path("LLI_API_TOKEN.txt"),
-        help="file containing only the LLI authorisation token (default: ./LLI_API_TOKEN.txt)",
+        default=Path("LLI_API_TOKEN.json"),
+        help=(
+            "JSON file containing the LLI authorisation token under the 'token' key "
+            "(default: ./LLI_API_TOKEN.json)"
+        ),
     )
     parser.add_argument(
         "--output-dir",
