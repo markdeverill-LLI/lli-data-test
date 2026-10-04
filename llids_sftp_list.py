@@ -12,7 +12,7 @@ from typing import Iterable, TextIO
 
 import paramiko
 
-from kiteworks_sftp_push import (
+from llids_sftp_push import (
     clean_path_argument,
     configure_host_key_policy,
     validate_private_key_file,
@@ -26,12 +26,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server", required=True, help="SFTP server hostname")
     parser.add_argument("--port", type=int, default=22, help="SFTP port (default: 22)")
     parser.add_argument("--user", required=True, help="SFTP username")
-    parser.add_argument("--password", help="SFTP password or private-key passphrase")
+    parser.add_argument("--password", help="SFTP account password")
     parser.add_argument(
         "--sshkey",
         "--ssh-key",
         dest="sshkey",
         help="Path to the client SSH private-key file",
+    )
+    parser.add_argument(
+        "--key-passphrase",
+        help="Passphrase used to decrypt the client SSH private key",
     )
     parser.add_argument(
         "--host-key-fingerprint",
@@ -119,6 +123,7 @@ def run_listing(args: argparse.Namespace) -> None:
             hostname=args.server,
             port=args.port,
             key_filename=ssh_key_path,
+            passphrase=args.key_passphrase,
             username=args.user,
             password=args.password,
             allow_agent=False,
@@ -150,8 +155,15 @@ def main() -> int:
     try:
         run_listing(args)
         return 0
+    except paramiko.PasswordRequiredException:
+        print(
+            "Listing failed: private key file is encrypted. Supply its "
+            "passphrase with --key-passphrase.",
+            file=sys.stderr,
+        )
+        return 1
     except Exception as error:
-        print(error, file=sys.stderr)
+        print(f"Listing failed: {error}", file=sys.stderr)
         return 1
 
 
