@@ -2,6 +2,7 @@
 """List files and directories on an SFTP server."""
 
 import argparse
+import fnmatch
 import posixpath
 import stat
 import sys
@@ -56,6 +57,11 @@ def parse_args() -> argparse.Namespace:
         "--outputfile",
         help="Write the directory listing to this local file",
     )
+    parser.add_argument(
+        "--file-pattern",
+        default="*",
+        help="Shell-style file pattern to include (default: *)",
+    )
     args = parser.parse_args()
     if not args.password and not args.sshkey:
         parser.error("at least one of --password or --sshkey is required")
@@ -107,9 +113,16 @@ def write_listing(
     sftp: paramiko.SFTPClient,
     recursive: bool,
     destination: TextIO,
+    file_pattern: str = "*",
 ) -> None:
     print("TYPE\tSIZE\tMODIFIED_UTC\tPATH", file=destination)
     for path, entry in iter_directory(sftp, recursive=recursive):
+        if (
+            not stat.S_ISDIR(entry.st_mode)
+            and not fnmatch.fnmatch(entry.filename, file_pattern)
+            and not fnmatch.fnmatch(path, file_pattern)
+        ):
+            continue
         print(format_entry(path, entry), file=destination)
 
 
@@ -145,6 +158,7 @@ def run_listing(args: argparse.Namespace) -> None:
                     sftp,
                     recursive=args.subfolders == "Y",
                     destination=destination,
+                    file_pattern=args.file_pattern,
                 )
     finally:
         client.close()
