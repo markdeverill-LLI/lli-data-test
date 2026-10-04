@@ -61,12 +61,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server", required=True, help="SFTP server hostname")
     parser.add_argument("--port", type=int, default=22, help="SFTP port (default: 22)")
     parser.add_argument("--user", required=True, help="SFTP username")
-    parser.add_argument("--password", help="SFTP password or private-key passphrase")
+    parser.add_argument("--password", help="SFTP account password")
     parser.add_argument(
         "--sshkey",
         "--ssh-key",
         dest="sshkey",
         help="Path to the client SSH private-key file",
+    )
+    parser.add_argument(
+        "--key-passphrase",
+        help="Passphrase used to decrypt the client SSH private key",
     )
     parser.add_argument(
         "--host-key-fingerprint",
@@ -159,14 +163,17 @@ def ensure_remote_directory(
             current_path += "/" + part
             try:
                 sftp.stat(current_path)
+                print(f"Remote directory exists: {current_path}")
             except OSError as error:
                 if error.errno != errno.ENOENT:
                     raise
+                print(f"Creating remote directory: {current_path}")
                 sftp.mkdir(current_path)
         return
 
     try:
         sftp.stat(remote_path)
+        print(f"Remote directory exists: {remote_path}")
     except OSError as error:
         if error.errno != errno.ENOENT:
             raise
@@ -180,13 +187,19 @@ def upload_file(
     local_file: Path,
     remote_file: str,
     transfer_mode: str,
-) -> None:
+) -> int:
     if transfer_mode == "ASCII":
         content = local_file.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         with io.BytesIO(content) as source:
-            sftp.putfo(source, remote_file, file_size=len(content), confirm=True)
+            attributes = sftp.putfo(
+                source,
+                remote_file,
+                file_size=len(content),
+                confirm=True,
+            )
     else:
-        sftp.put(str(local_file), remote_file, confirm=True)
+        attributes = sftp.put(str(local_file), remote_file, confirm=True)
+    return attributes.st_size
 
 
 def configure_host_key_policy(
@@ -220,28 +233,85 @@ def run_upload(args: argparse.Namespace) -> None:
     print(f"remotePath = {remote_path}")
     print(f"create Directory = {args.create_dir}")
     print(f"transferMode = {args.transfer_mode}")
+    print(f"files matched = {len(local_files)}")
+    for local_file in local_files:
+        print(f"  {local_file} ({local_file.stat().st_size} bytes)")
+    print(
+        "authentication = "
+        + ("SSH private key" if ssh_key_path else "username/password")
+    )
+    if ssh_key_path:
+        print(f"private key = {ssh_key_path}")
+        print(
+            "private key passphrase = "
+            + ("supplied" if args.key_passphrase else "not supplied")
+        )
+    print(
+        "host key verification = "
+        + (
+            f"fingerprint {args.host_key_fingerprint}"
+            if args.host_key_fingerprint
+            else "disabled"
+        )
+    )
 
     client = paramiko.SSHClient()
     configure_host_key_policy(client, args.host_key_fingerprint)
 
     try:
+        print(f"Connecting to {args.server}:{args.port} as {args.user}...")
         client.connect(
             hostname=args.server,
             port=args.port,
             key_filename=ssh_key_path,
+            passphrase=args.key_passphrase,
             username=args.user,
             password=args.password,
             allow_agent=False,
             look_for_keys=False,
         )
+        print("SSH authentication succeeded.")
+        print("Opening SFTP session...")
         with client.open_sftp() as sftp:
+            print(f"SFTP session opened. Login directory: {sftp.getcwd() or '(unknown)'}")
+            print(f"Checking remote directory: {remote_path}")
             ensure_remote_directory(sftp, remote_path, args.create_dir)
             for local_file in local_files:
                 remote_file = posixpath.join(remote_path, local_file.name)
-                upload_file(sftp, local_file, remote_file, args.transfer_mode)
-                print(f"Upload of {local_file} succeeded")
+                print(f"Uploading {local_file} to {remote_file}...")
+                remote_size = upload_file(
+                    sftp,
+                    local_file,
+                    remote_file,
+                    args.transfer_mode,
+                )
+                print(
+                    f"Upload succeeded: {remote_file} "
+                    f"({remote_size} bytes confirmed on server)"
+                )
+            print(f"Completed {len(local_files)} upload(s).")
     finally:
         client.close()
+
+
+def format_error(error: Exception) -> str:
+    if isinstance(error, paramiko.PasswordRequiredException):
+        return (
+            "Private key file is encrypted. Supply its passphrase with "
+            "--key-passphrase. No SFTP session was opened and no file was uploaded."
+        )
+    if isinstance(error, paramiko.AuthenticationException):
+        return (
+            "SSH authentication failed. The server rejected the supplied username, "
+            "password, or private key. Confirm that the public key matching --sshkey "
+            "is registered for this Kiteworks user."
+        )
+    if isinstance(error, paramiko.SSHException):
+        return f"SSH connection failed: {error}"
+    if isinstance(error, OSError):
+        error_number = f" [errno {error.errno}]" if error.errno is not None else ""
+        return f"SFTP or local file operation failed{error_number}: {error}"
+    return f"{type(error).__name__}: {error}"
 
 
 def main() -> int:
@@ -250,10 +320,10 @@ def main() -> int:
         run_upload(args)
         return 0
     except RemoteDirectoryMissingError as error:
-        print(error, file=sys.stderr)
+        print(f"Upload failed: {error}", file=sys.stderr)
         return 5
     except Exception as error:
-        print(error, file=sys.stderr)
+        print(f"Upload failed: {format_error(error)}", file=sys.stderr)
         return 1
 
 
