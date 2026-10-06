@@ -1,0 +1,4 @@
+2026-10-06 19:43:01 INFO    Connecting to LLIPrdOraLo01.AWS.LloydslistIntelligence.com:1521/SID1.world as batch
+2026-10-06 19:43:02 INFO    Executing: select code, descr, short_descr, domain, editdt createdt from sid.codes where domain = 'VSLCO REL TYPE'
+2026-10-06 19:43:02 INFO    6 rows selected.
+2026-10-06 19:43:02 INFO    Done. Statements executed: 1, errors: 0, exit code: 0
