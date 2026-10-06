@@ -468,6 +468,22 @@ def main(argv=None) -> int:
     text = substitute_variables(raw_text, variables, args.arg)
     text = strip_comments(text)
 
+    statement_count = sum(1 for kind, _a, _b in tokenize(text) if kind == "sql")
+    if not args.outputfile:
+        if statement_count == 0:
+            LOG.error(
+                "No --outputfile was specified, so %s must contain one or more "
+                "SQL statements to execute, but none were found.",
+                sql_path,
+            )
+            return 1
+        LOG.info(
+            "No --outputfile specified; running in execute-only mode (%d "
+            "statement(s) to execute). Any SELECT output will be discarded "
+            "unless the script uses its own SPOOL command.",
+            statement_count,
+        )
+
     if args.thick_mode:
         init_kwargs = {}
         if args.oracle_client_lib_dir:
