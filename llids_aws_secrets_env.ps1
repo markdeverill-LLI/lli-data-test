@@ -3,7 +3,8 @@ param(
     [string]$Region,
     [string]$Profile,
     [string]$Prefix = "llids-",
-    [string]$OutputFile
+    [string]$OutputFile,
+    [string]$OutputVariableValue
 )
 
 $ErrorActionPreference = "Stop"
@@ -147,6 +148,17 @@ try
     $environmentValues = ConvertTo-SecretEnvironmentValues `
         -SecretValue $secretString `
         -RequiredPrefix $Prefix
+
+    if (![string]::IsNullOrWhiteSpace($OutputVariableValue))
+    {
+        if (!$environmentValues.ContainsKey($OutputVariableValue))
+        {
+            Write-Output "Value key not found: $OutputVariableValue"
+            return
+        }
+        Write-Output ([string]$environmentValues[$OutputVariableValue])
+        return
+    }
 
     foreach ($entry in $environmentValues.GetEnumerator())
     {
