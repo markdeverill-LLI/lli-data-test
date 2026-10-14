@@ -4,6 +4,7 @@
 import argparse
 import base64
 import json
+import os
 import re
 import shlex
 import sys
@@ -38,6 +39,10 @@ def parse_args() -> argparse.Namespace:
         "--prefix",
         default=DEFAULT_PREFIX,
         help=f"Required secret-key prefix (default: {DEFAULT_PREFIX})",
+    )
+    parser.add_argument(
+        "--outputfile",
+        help="Write the retrieved key/value pairs to this plaintext JSON file",
     )
     return parser.parse_args()
 
@@ -141,6 +146,37 @@ def emit_bash(environment_values: Dict[str, str]) -> None:
         print(f"export {normalized_key}={shlex.quote(value)}")
 
 
+def displayed_environment_values(
+    environment_values: Dict[str, str],
+    shell: str,
+) -> Dict[str, str]:
+    if shell != "bash":
+        return environment_values
+
+    displayed_values = {}
+    for key, value in environment_values.items():
+        normalized_key = normalize_bash_key(key)
+        if normalized_key in displayed_values:
+            raise ValueError(
+                f"Multiple secret keys normalize to Bash variable {normalized_key!r}"
+            )
+        displayed_values[normalized_key] = value
+    return displayed_values
+
+
+def write_json_file(path: str, environment_values: Dict[str, str]) -> None:
+    file_descriptor = os.open(
+        os.path.expanduser(path),
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600,
+    )
+    if hasattr(os, "fchmod"):
+        os.fchmod(file_descriptor, 0o600)
+    with os.fdopen(file_descriptor, "w", encoding="utf-8", newline="\n") as output:
+        json.dump(environment_values, output, indent=2, ensure_ascii=False)
+        output.write("\n")
+
+
 def main() -> int:
     args = parse_args()
     try:
@@ -150,6 +186,12 @@ def main() -> int:
             profile=args.profile,
         )
         environment_values = parse_secret(secret_value, args.prefix)
+        if args.outputfile:
+            write_json_file(args.outputfile, environment_values)
+            print(
+                f"Warning: wrote plaintext secrets to {args.outputfile}.",
+                file=sys.stderr,
+            )
 
         if args.shell == "powershell":
             emit_powershell(environment_values)
@@ -158,6 +200,11 @@ def main() -> int:
         else:
             emit_bash(environment_values)
 
+        for key, value in displayed_environment_values(
+            environment_values,
+            args.shell,
+        ).items():
+            print(f"Created environment variable: {key}={value}", file=sys.stderr)
         print(
             f"Retrieved {len(environment_values)} environment variable(s) "
             f"from {args.secret_name}.",
