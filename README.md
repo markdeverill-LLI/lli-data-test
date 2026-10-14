@@ -1,5 +1,49 @@
 # lli-data-test
 
+## Running Oracle SQL scripts without sqlplus
+
+`oracle_sql_runner.py` replaces the Oracle `sqlplus` command-line tool on the
+SCCM server. It runs a `.sql` script containing DDL/DML (including
+`CREATE GLOBAL TEMPORARY TABLE` style temporary data sets), PL/SQL blocks, and
+`SELECT` statements, and spools `SELECT` output to CSV with headers. It uses
+`python-oracledb` in pure-Python "thin" mode, so no Oracle Client / Instant
+Client install is required for a simple host:port/service connection. Install
+the dependency with `pip install -r requirements.txt` (or `pip install
+oracledb`).
+
+```powershell
+python oracle_sql_runner.py `
+  --sqlfile extract.sql `
+  --outputfile extract.csv `
+  --logfile extract.log `
+  --server dbhost.example.com --port 1521 --service ORCLPDB1 `
+  --oracleuser etl_user --password-env ORACLE_PASSWORD
+```
+
+Key options:
+
+- `--sqlfile` — the SQL script to run.
+- `--outputfile` — CSV file for `SELECT` output when the script has no inline
+  `SPOOL` command, or the target to return to after `SPOOL OFF`. Scripts that
+  include their own `SPOOL <file>` / `SPOOL OFF` commands are honoured too, so
+  existing scripts work unchanged.
+- `--logfile` — run log (statement-by-statement progress, row counts, and
+  errors); always also logged to stdout.
+- `--service` plus `--server`/`--port` (default port `1521`) to connect via
+  Easy Connect, or `--dsn` to supply a full connect string/override.
+- `--oracleuser` and `--password` (or `--password-env NAME`, default
+  `ORACLE_PASSWORD`, to avoid putting the password on the command line; falls
+  back to an interactive prompt if neither is supplied).
+- `--var NAME=VALUE` / `--arg VALUE` to substitute `&NAME` / `&1`, `&2` ...
+  references used by scripts, and `--fail-fast` to stop on the first error
+  regardless of the script's `WHENEVER SQLERROR` setting.
+
+Supported sqlplus directives in the script itself: `SET HEADING|FEEDBACK|COLSEP`,
+`SPOOL <file>` / `SPOOL OFF`, `WHENEVER SQLERROR EXIT|CONTINUE`, `PROMPT`,
+`REM`/`--` comments, `/* */` block comments, and `EXIT`/`QUIT`. Statements
+terminated by `;` or a lone `/` (including multi-line PL/SQL blocks) are both
+supported.
+
 ## Uploading a data extract to Amazon S3
 
 `llids_awss3_upload.py` uploads every file with the requested extension from an
