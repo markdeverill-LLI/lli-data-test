@@ -44,6 +44,11 @@ def parse_args() -> argparse.Namespace:
         "--outputfile",
         help="Write the retrieved key/value pairs to this plaintext JSON file",
     )
+    parser.add_argument(
+        "--outputvariablevalue",
+        metavar="VARIABLE_NAME",
+        help="Print only the value for this exact secret key",
+    )
     return parser.parse_args()
 
 
@@ -186,6 +191,13 @@ def main() -> int:
             profile=args.profile,
         )
         environment_values = parse_secret(secret_value, args.prefix)
+        if args.outputvariablevalue:
+            if args.outputvariablevalue not in environment_values:
+                print(f"Value key not found: {args.outputvariablevalue}")
+                return 1
+            print(environment_values[args.outputvariablevalue])
+            return 0
+
         if args.outputfile:
             write_json_file(args.outputfile, environment_values)
             print(
