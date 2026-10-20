@@ -33,7 +33,13 @@ param(
 
     [Alias("transfer-mode")]
     [ValidateSet("BINARY", "ASCII")]
-    [string]$TransferMode = "BINARY"
+    [string]$TransferMode = "BINARY",
+
+    [Alias("winscp-exe-path")]
+    [string]$WinScpExePath = "C:\Program Files (x86)\WinSCP\WinSCP.exe",
+
+    [Alias("winscp-dll-path")]
+    [string]$WinScpDllPath = "C:\Program Files (x86)\WinSCP\WinSCPnet.dll"
 )
 
 $ErrorActionPreference = "Stop"
@@ -85,6 +91,22 @@ function ConvertTo-WinScpHostKeyFingerprint
     $normalized = $normalized -replace "(?i)SHA256:", ""
     $normalized = $normalized -replace "(?i)MD5:", ""
     return $normalized
+}
+
+function Resolve-RequiredFilePath
+{
+    param(
+        [string]$Path,
+        [string]$Description
+    )
+
+    $cleanedPath = Get-CleanPathArgument $Path
+    $expandedPath = [Environment]::ExpandEnvironmentVariables($cleanedPath)
+    if (!(Test-Path -LiteralPath $expandedPath -PathType Leaf))
+    {
+        throw "$Description not found: $expandedPath"
+    }
+    return (Resolve-Path -LiteralPath $expandedPath -ErrorAction Stop).ProviderPath
 }
 
 function Assert-PrivateKeyFile
@@ -168,13 +190,18 @@ try
         throw "At least one of -Password or -SshKey is required."
     }
 
-    $currentStage = "locating the WinSCP .NET assembly"
-    $winScpAssemblyPath = "C:\Program Files (x86)\WinSCP\WinSCPnet.dll"
-    if (!(Test-Path -LiteralPath $winScpAssemblyPath -PathType Leaf))
-    {
-        throw "WinSCP .NET assembly not found: $winScpAssemblyPath"
-    }
-    Add-Type -Path $winScpAssemblyPath
+    $currentStage = "locating the WinSCP files"
+    $resolvedWinScpDllPath = Resolve-RequiredFilePath `
+        -Path $WinScpDllPath `
+        -Description "WinSCP .NET assembly"
+    $resolvedWinScpExePath = Resolve-RequiredFilePath `
+        -Path $WinScpExePath `
+        -Description "WinSCP executable"
+    Write-Host "WinSCP .NET assembly = $resolvedWinScpDllPath"
+    Write-Host "WinSCP executable = $resolvedWinScpExePath"
+
+    $currentStage = "loading the WinSCP .NET assembly"
+    Add-Type -Path $resolvedWinScpDllPath
 
     $currentStage = "normalizing local and remote paths"
     $cleanLocalPath = Get-CleanPathArgument $LocalPath
@@ -252,6 +279,7 @@ try
     }
 
     $session = New-Object WinSCP.Session
+    $session.ExecutablePath = $resolvedWinScpExePath
     try
     {
         $currentStage = "opening the SFTP connection"
