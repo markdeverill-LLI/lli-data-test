@@ -1,10 +1,14 @@
 param(
+    [Alias("AwsSecret")]
     [string]$SecretName = "prod/dataservices/sharedsecrets",
     [string]$Region,
     [string]$Profile,
     [string]$Prefix = "llids-",
     [string]$OutputFile,
-    [string]$OutputVariableValue
+    [string]$OutputVariableValue,
+    [ValidateSet("powershell", "cmd")]
+    [string]$Shell = "powershell",
+    [string]$ShellCommands
 )
 
 $ErrorActionPreference = "Stop"
@@ -138,6 +142,49 @@ function ConvertTo-SecretEnvironmentValues
     return $environmentValues
 }
 
+function ConvertTo-PowerShellSingleQuotedLiteral
+{
+    param([string]$Value)
+
+    return "'" + $Value.Replace("'", "''") + "'"
+}
+
+function ConvertTo-CmdSetCommand
+{
+    param(
+        [string]$Key,
+        [string]$Value
+    )
+
+    if ($Key.Contains("=") -or $Key.Contains("`r") -or $Key.Contains("`n"))
+    {
+        throw "Secret key '$Key' cannot be represented as a CMD environment variable."
+    }
+    if ($Value.Contains("`r") -or $Value.Contains("`n"))
+    {
+        throw "Secret value for '$Key' contains a newline and cannot be emitted safely for CMD."
+    }
+
+    $escapedValue = $Value.Replace("%", "%%")
+    return 'set "' + $Key + "=" + $escapedValue + '"'
+}
+
+function Resolve-OutputPath
+{
+    param(
+        [string]$Path,
+        [string]$Description
+    )
+
+    $resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    $outputDirectory = [IO.Path]::GetDirectoryName($resolvedPath)
+    if (![string]::IsNullOrEmpty($outputDirectory) -and !(Test-Path -LiteralPath $outputDirectory))
+    {
+        throw "$Description directory does not exist: $outputDirectory"
+    }
+    return $resolvedPath
+}
+
 try
 {
     $awsResponse = Get-AwsSecretJson `
@@ -172,12 +219,9 @@ try
 
     if (![string]::IsNullOrWhiteSpace($OutputFile))
     {
-        $resolvedOutputFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputFile)
-        $outputDirectory = [IO.Path]::GetDirectoryName($resolvedOutputFile)
-        if (![string]::IsNullOrEmpty($outputDirectory) -and !(Test-Path -LiteralPath $outputDirectory))
-        {
-            throw "Output directory does not exist: $outputDirectory"
-        }
+        $resolvedOutputFile = Resolve-OutputPath `
+            -Path $OutputFile `
+            -Description "Output file"
 
         $jsonOutput = [ordered]@{}
         foreach ($entry in $environmentValues.GetEnumerator())
@@ -188,6 +232,32 @@ try
             ConvertTo-Json -Depth 2 |
             Set-Content -LiteralPath $resolvedOutputFile -Encoding UTF8
         Write-Warning "Wrote plaintext secrets to $resolvedOutputFile."
+    }
+
+    if (![string]::IsNullOrWhiteSpace($ShellCommands))
+    {
+        $resolvedShellCommands = Resolve-OutputPath `
+            -Path $ShellCommands `
+            -Description "Shell commands file"
+        $commands = @(
+            foreach ($entry in $environmentValues.GetEnumerator() | Sort-Object Key)
+            {
+                if ($Shell -eq "cmd")
+                {
+                    ConvertTo-CmdSetCommand `
+                        -Key ([string]$entry.Key) `
+                        -Value ([string]$entry.Value)
+                }
+                else
+                {
+                    $keyLiteral = ConvertTo-PowerShellSingleQuotedLiteral ([string]$entry.Key)
+                    $valueLiteral = ConvertTo-PowerShellSingleQuotedLiteral ([string]$entry.Value)
+                    "[Environment]::SetEnvironmentVariable($keyLiteral, $valueLiteral, 'Process')"
+                }
+            }
+        )
+        $commands | Set-Content -LiteralPath $resolvedShellCommands -Encoding UTF8
+        Write-Warning "Wrote plaintext $Shell secret commands to $resolvedShellCommands."
     }
 
     Write-Host (
