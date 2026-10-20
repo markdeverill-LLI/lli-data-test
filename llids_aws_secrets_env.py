@@ -24,6 +24,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--secret-name",
+        "--awssecret",
+        dest="secret_name",
         default=DEFAULT_SECRET_NAME,
         help=f"AWS secret name or ARN (default: {DEFAULT_SECRET_NAME})",
     )

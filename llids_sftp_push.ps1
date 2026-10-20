@@ -1,12 +1,10 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
     [string]$Server,
 
     [ValidateRange(1, 65535)]
     [int]$Port = 22,
 
-    [Parameter(Mandatory = $true)]
     [string]$User,
 
     [string]$Password,
@@ -20,11 +18,9 @@ param(
     [Alias("host-key-fingerprint")]
     [string]$HostKeyFingerprint,
 
-    [Parameter(Mandatory = $true)]
     [Alias("remote-path")]
     [string]$RemotePath,
 
-    [Parameter(Mandatory = $true)]
     [Alias("local-path")]
     [string]$LocalPath,
 
@@ -39,7 +35,10 @@ param(
     [string]$WinScpExePath = "C:\Program Files (x86)\WinSCP\WinSCP.exe",
 
     [Alias("winscp-dll-path")]
-    [string]$WinScpDllPath = "C:\Program Files (x86)\WinSCP\WinSCPnet.dll"
+    [string]$WinScpDllPath = "C:\Program Files (x86)\WinSCP\WinSCPnet.dll",
+
+    [Alias("h")]
+    [switch]$Help
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,6 +64,67 @@ function Get-CleanPathArgument
         }
     }
     return $cleaned
+}
+
+function Show-Usage
+{
+    Write-Host @"
+LLIDS SFTP upload utility
+
+Usage:
+  powershell -File .\llids_sftp_push.ps1 [parameters]
+
+Required parameters:
+  -Server <hostname>                 SFTP server hostname.
+  -User <username>                   SFTP username.
+  -RemotePath <path>                 Remote destination directory.
+                                     Alias: -remote-path
+  -LocalPath <path-or-pattern>       Local file path or wildcard pattern.
+                                     Alias: -local-path
+  One of:
+  -Password <password>               SFTP account password.
+  -SshKey <private-key-file>         Client SSH private-key file.
+                                     Alias: -ssh-key
+
+Optional parameters:
+  -Port <number>                     SFTP port. Default: 22.
+  -KeyPassphrase <passphrase>        Private-key passphrase.
+                                     Alias: -key-passphrase
+  -HostKeyFingerprint <fingerprint>  Expected SSH server host-key fingerprint.
+                                     Alias: -host-key-fingerprint
+                                     If omitted, host-key verification is disabled.
+  -CreateDir                         Create missing remote directories.
+                                     Alias: -create-dir
+  -TransferMode <BINARY|ASCII>       Transfer mode. Default: BINARY.
+                                     Alias: -transfer-mode
+  -WinScpExePath <path>              Path to WinSCP.exe.
+                                     Alias: -winscp-exe-path
+                                     Default: C:\Program Files (x86)\WinSCP\WinSCP.exe
+  -WinScpDllPath <path>              Path to WinSCPnet.dll.
+                                     Alias: -winscp-dll-path
+                                     Default: C:\Program Files (x86)\WinSCP\WinSCPnet.dll
+  -Help                              Show this help and exit.
+                                     Alias: -h
+
+Password example:
+  powershell -File .\llids_sftp_push.ps1 ``
+    -Server "sftp.example.com" ``
+    -User "username" ``
+    -Password "password" ``
+    -LocalPath ".\exports\*.csv" ``
+    -RemotePath "/incoming" ``
+    -CreateDir ``
+    -HostKeyFingerprint "SHA256:..."
+
+Private-key example:
+  powershell -File .\llids_sftp_push.ps1 ``
+    -Server "sftp.example.com" ``
+    -User "username" ``
+    -SshKey ".\private-key.sshkey" ``
+    -KeyPassphrase "passphrase" ``
+    -LocalPath ".\test.txt" ``
+    -RemotePath "/incoming"
+"@
 }
 
 function Get-NormalizedRemotePath
@@ -182,9 +242,29 @@ function Ensure-RemoteDirectory
     }
 }
 
+if ($Help)
+{
+    Show-Usage
+    exit 0
+}
+
 $currentStage = "validating parameters"
 try
 {
+    $requiredParameters = @{
+        "Server" = $Server
+        "User" = $User
+        "RemotePath" = $RemotePath
+        "LocalPath" = $LocalPath
+    }
+    foreach ($requiredParameter in $requiredParameters.GetEnumerator())
+    {
+        if ([string]::IsNullOrWhiteSpace([string]$requiredParameter.Value))
+        {
+            throw "Missing required parameter -$($requiredParameter.Key). Use -Help for usage."
+        }
+    }
+
     if ([string]::IsNullOrWhiteSpace($Password) -and [string]::IsNullOrWhiteSpace($SshKey))
     {
         throw "At least one of -Password or -SshKey is required."
